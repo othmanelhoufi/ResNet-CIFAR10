@@ -20,7 +20,7 @@ from sklearn.metrics import confusion_matrix
 import seaborn as sn
 import pandas as pd
 
-from resnet_architecture import ResNet18
+from resnet_architecture import ResNet18, ResNet34
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -28,12 +28,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # wandb param
 WANDB = 1
 ENTITY = 'othmanelhoufi'
-EXPERIMENT_NAME = 'ResNet-18-with-MultiStepLR'
+EXPERIMENT_NAME = 'ResNet-18-with-MultiStepLR-L2Reg'
 
 # Hyper-parameters
-batch_size = 100
-num_epochs = 200
-learning_rate = 0.1
+BATCH_SIZE = 100
+EPOCHS = 200
+LEARNING_RATE = 0.1
+WEIGHT_DECAY=0.001
 
 # fetch and split CIFAR10 dataset
 def init_dataset_splits(batch_size):
@@ -49,7 +50,7 @@ def init_dataset_splits(batch_size):
     train_dataset = CIFAR10(root='./data', train=True, transform=transform, download=True)
     test_dataset = CIFAR10(root='./data', train=False, transform=transforms.ToTensor())
 
-    torch.manual_seed(43)
+    torch.manual_seed(99)
     val_size = 5000
     train_size = len(train_dataset) - val_size
 
@@ -92,21 +93,15 @@ def evaluate(model,criterion, val_loader):
     epoch_acc = torch.stack(batch_accs).mean()      # Combine accuracies
     return {'val_loss': epoch_loss.item(), 'val_acc': epoch_acc.item()}
 
-def training_loop(model, optimizer, criterion, learning_rate, scheduler, train_loader, val_loader):
-
-    # For updating learning rate
-    def update_lr(optimizer, lr):
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
+def training_loop(model, optimizer, criterion, scheduler, train_loader, val_loader):
 
     # Magic
     if WANDB: wandb.watch(model, log_freq=100)
 
     # Train the model
     total_step = len(train_loader)
-    curr_lr = learning_rate
     model.train()
-    for epoch in tqdm(range(num_epochs)):
+    for epoch in tqdm(range(EPOCHS)):
         # log lr
         if WANDB: wandb.log({"learning_rate": optimizer.param_groups[0]["lr"]})
 
@@ -129,17 +124,13 @@ def training_loop(model, optimizer, criterion, learning_rate, scheduler, train_l
             losses.append(loss.detach())
 
             if (i+1) % 100 == 0:
-                print ("Epoch [{}/{}], Step [{}/{}] Loss: {:.4f}" .format(epoch+1, num_epochs, i+1, total_step, loss.item()))
+                print ("Epoch [{}/{}], Step [{}/{}] Loss: {:.4f}" .format(epoch+1, EPOCHS, i+1, total_step, loss.item()))
 
-        # decaying lr
-        scheduler.step()
 
         if WANDB: wandb.log({"train_loss": torch.stack(losses).mean()})
 
         # Decay learning rate
-        # if (epoch+1) % 20 == 0:
-        #     curr_lr /= 3
-        #     update_lr(optimizer, curr_lr)
+        scheduler.step()
 
         # Validation phase
         eval_result = evaluate(model, criterion, val_loader)
@@ -190,21 +181,25 @@ def testing_loop(model, test_loader):
 
 def main():
     model = ResNet18().to(device)
-    train_loader, val_loader, test_loader = init_dataset_splits(batch_size)
+    # model = ResNet34().to(device)
+    train_loader, val_loader, test_loader = init_dataset_splits(BATCH_SIZE)
     show_sample_images(train_loader)
 
     summary(model, input_size=(1, 3, 32, 32))
 
     # Loss and Opt
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80,150], gamma=0.1)
 
-    training_loop(model, optimizer, criterion, learning_rate, scheduler, train_loader, val_loader)
+    # lambda1 = lambda epoch: 0.65 ** epoch
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+
+    training_loop(model, optimizer, criterion, scheduler, train_loader, val_loader)
     testing_loop(model, test_loader)
 
     # Save the model checkpoint
-    torch.save(model.state_dict(), 'resnet.ckpt')
+    torch.save(model.state_dict(), f'{EXPERIMENT_NAME}.ckpt')
 
 if __name__ == '__main__':
 
