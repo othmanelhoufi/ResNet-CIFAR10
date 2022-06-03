@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sn
 import pandas as pd
 
@@ -26,15 +26,16 @@ from resnet_architecture import ResNet18, ResNet34
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # wandb param
-WANDB = 1
+WANDB = 0
 ENTITY = 'othmanelhoufi'
-EXPERIMENT_NAME = 'ResNet-18-with-MultiStepLR-L2Reg'
+EXPERIMENT_NAME = 'ResNet-18-with-MultiStepLR-L2Reg1e-2'
 
 # Hyper-parameters
 BATCH_SIZE = 100
 EPOCHS = 200
 LEARNING_RATE = 0.1
-WEIGHT_DECAY=0.001
+WEIGHT_DECAY = 0.01
+DROPOUT = -1
 
 # fetch and split CIFAR10 dataset
 def init_dataset_splits(batch_size):
@@ -50,25 +51,26 @@ def init_dataset_splits(batch_size):
     train_dataset = CIFAR10(root='./data', train=True, transform=transform, download=True)
     test_dataset = CIFAR10(root='./data', train=False, transform=transforms.ToTensor())
 
-    torch.manual_seed(99)
-    val_size = 5000
+    torch.manual_seed(43)
+    val_size = 10000
     train_size = len(train_dataset) - val_size
 
     train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
 
     # Data loader
-    train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True, num_workers=3, pin_memory=True)
+    val_loader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=True, num_workers=3, pin_memory=True)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, num_workers=3, pin_memory=True)
 
     return train_loader, val_loader, test_loader
 
 def show_sample_images(train_loader):
     for images, _ in train_loader:
         print('images.shape:', images.shape)
-        plt.figure(figsize=(16,8))
+        plt.figure(figsize=(10,8))
         plt.axis('off')
-        plt.imshow(make_grid(images, nrow=16).permute((1, 2, 0)))
+        plt.imshow(make_grid(images, nrow=10).permute((1, 2, 0)))
+        plt.savefig("cifar10-sample.png",bbox_inches='tight',dpi=100)
         # plt.show()
         break
 
@@ -141,10 +143,7 @@ def training_loop(model, optimizer, criterion, scheduler, train_loader, val_load
 
 
 
-def log_confusion_matrix(y_pred, y_true):
-    # constant for classes
-    classes = ('airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
+def log_confusion_matrix(y_pred, y_true, classes):
     # Build confusion matrix
     cf_matrix = confusion_matrix(y_true, y_pred)
     df_cm = pd.DataFrame(cf_matrix/np.sum(cf_matrix) *10, index = [i for i in classes], columns = [i for i in classes])
@@ -153,7 +152,15 @@ def log_confusion_matrix(y_pred, y_true):
     plt.savefig('output.png')
     if WANDB: wandb.log({"Confusion Matrix : " + EXPERIMENT_NAME: wandb.Image(plt.gcf())})
 
+def log_classification_report(y_true, y_pred, classes):
+    report = classification_report(y_true, y_pred, target_names=classes, digits=3)
+    print(report)
+    # if WANDB: wandb.log(report)
+
 def testing_loop(model, test_loader):
+    # constant for classes
+    classes = ('airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
     # constructing confusion matrix
     y_pred = []
     y_true = []
@@ -176,11 +183,12 @@ def testing_loop(model, test_loader):
 
         print('Accuracy of the model on the test images: {} %'.format(100 * correct / total))
 
-    log_confusion_matrix(y_pred, y_true)
+    log_classification_report(y_true, y_pred, classes)
+    log_confusion_matrix(y_pred, y_true, classes)
 
 
 def main():
-    model = ResNet18().to(device)
+    model = ResNet18(dropout=DROPOUT).to(device)
     # model = ResNet34().to(device)
     train_loader, val_loader, test_loader = init_dataset_splits(BATCH_SIZE)
     show_sample_images(train_loader)
@@ -189,7 +197,8 @@ def main():
 
     # Loss and Opt
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80,150], gamma=0.1)
 
     # lambda1 = lambda epoch: 0.65 ** epoch

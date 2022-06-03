@@ -33,7 +33,7 @@ class ResidualBlock(nn.Module):
 
 # ResNet
 class ResNet(nn.Module):
-    def __init__(self, block, layers, image_channels=3, num_classes=10):
+    def __init__(self, block, layers, image_channels=3, num_classes=10, dropout=-1):
         super(ResNet, self).__init__()
         self.in_channels = 64
         self.conv = nn.Conv2d(image_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -49,6 +49,12 @@ class ResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512, num_classes)
 
+        # Define proportion or neurons to dropout
+        self.dropout_neurons = False
+        if (0 < dropout < 1):
+            self.dropout_neurons = True
+            self.dropout = nn.Dropout(p=dropout)
+
     def forward(self, x):
         out = self.conv(x)
         out = self.bn(out)
@@ -60,6 +66,10 @@ class ResNet(nn.Module):
         out = self.layer4(out)
         out = self.avgpool(out)
         out = out.view(out.size(0), -1)
+
+        # Apply dropout
+        if self.dropout_neurons: out = self.dropout(out)
+
         out = self.fc(out)
         return out
 
@@ -74,8 +84,8 @@ class ResNet(nn.Module):
             layers.append(block(out_channels, out_channels))
         return nn.Sequential(*layers)
 
-def ResNet18():
-    return ResNet(ResidualBlock, [2, 2, 2, 2])
+def ResNet18(dropout=-1):
+    return ResNet(ResidualBlock, [2, 2, 2, 2], dropout=dropout)
 
-def ResNet34():
-    return ResNet(ResidualBlock, [3, 4, 6, 3])
+def ResNet34(dropout=-1):
+    return ResNet(ResidualBlock, [3, 4, 6, 3], dropout=dropout)
